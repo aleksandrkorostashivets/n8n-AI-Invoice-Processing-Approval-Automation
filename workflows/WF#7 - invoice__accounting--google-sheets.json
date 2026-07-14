@@ -1,0 +1,412 @@
+{
+  "name": "WF#7 - invoice__accounting--google-sheets",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        -80
+      ],
+      "id": "19c55779-6aac-4835-937b-530e018c690b",
+      "name": "invoice__trigger--subworkflow"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e7a47cd-0778-4fb4-8638-097ba139cebd",
+              "leftValue": "={{\n  String($json.status ?? '').toLowerCase() === 'approved'\n  &&\n  String($json.approval_decision ?? '').toLowerCase() === 'approved'\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -432,
+        -80
+      ],
+      "id": "f44743cd-17da-4460-9123-22eb1bd70ec6",
+      "name": "invoice__condition--approved-for-accounting"
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{\n  'INVOICE_NOT_APPROVED_FOR_ACCOUNTING: ' +\n  String($json.processing_id ?? 'missing') +\n  ' | status: ' +\n  String($json.status ?? 'missing') +\n  ' | decision: ' +\n  String($json.approval_decision ?? 'missing')\n}}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        -208,
+        16
+      ],
+      "id": "47196bc6-8f45-483d-a37b-6651010865ee",
+      "name": "invoice__error--not-approved-for-accounting"
+    },
+    {
+      "parameters": {
+        "jsCode": "const invoice = $json;\n\nconst requiredFields = [\n  'invoice_id',\n  'processing_id',\n  'vendor_id',\n  'vendor_name',\n  'invoice_number',\n  'invoice_date',\n  'due_date',\n  'currency',\n  'total_amount',\n  'approval_decision',\n  'approved_at',\n  'drive_file_url'\n];\n\nconst missingFields = requiredFields.filter(\n  field => {\n    const value = invoice[field];\n\n    return (\n      value === null ||\n      value === undefined ||\n      value === ''\n    );\n  }\n);\n\nif (missingFields.length > 0) {\n  throw new Error(\n    `ACCOUNTING_FIELDS_MISSING: ${missingFields.join(', ')}`\n  );\n}\n\nconst totalAmount =\n  Number(\n    String(invoice.total_amount)\n      .replace(/\\s/g, '')\n      .replace(/,/g, '')\n  );\n\nif (\n  !Number.isFinite(totalAmount) ||\n  totalAmount <= 0\n) {\n  throw new Error(\n    `ACCOUNTING_TOTAL_INVALID: ${invoice.total_amount}`\n  );\n}\n\nconst normalizeRisks = (value) => {\n  if (Array.isArray(value)) {\n    return value\n      .map(String)\n      .map(item => item.trim())\n      .filter(Boolean);\n  }\n\n  return String(value ?? '')\n    .split(',')\n    .map(item => item.trim())\n    .filter(Boolean);\n};\n\nconst riskFlags =\n  normalizeRisks(invoice.risk_flags);\n\nconst accountingEntryId =\n  `ACC-${invoice.invoice_id}`;\n\nreturn {\n  json: {\n    ...invoice,\n\n    accounting_entry_id:\n      accountingEntryId,\n\n    accounting_total_amount:\n      Math.round(totalAmount * 100) / 100,\n\n    accounting_risk_flags:\n      riskFlags.join(', '),\n\n    accounting_approval_status:\n      'approved',\n\n    accounting_exported_at:\n      new Date().toISOString(),\n\n    status:\n      'accounting_export_pending'\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        -176
+      ],
+      "id": "e4e5045e-35df-4729-a260-d407bf166366",
+      "name": "invoice__accounting--prepare-entry"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1512529998,
+          "mode": "list",
+          "cachedResultName": "Accounting_Export",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=1512529998"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "accounting_entry_id": "={{ $json.accounting_entry_id }}",
+            "invoice_id": "={{ $json.invoice_id }}",
+            "processing_id": "={{ $json.processing_id }}",
+            "vendor_id": "={{ $json.vendor_id }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "invoice_number": "={{ $json.invoice_number }}",
+            "invoice_date": "={{ $json.invoice_date }}",
+            "due_date": "={{ $json.due_date }}",
+            "currency": "={{ $json.currency }}",
+            "total_amount": "={{ $json.accounting_total_amount }}",
+            "iban": "={{ $json.iban }}",
+            "risk_flags": "={{ $json.accounting_risk_flags }}",
+            "approval_status": "={{ $json.accounting_approval_status }}",
+            "approval_comment": "={{ $json.approval_comment }}",
+            "approved_by": "={{ $json.final_decision_by }}",
+            "approved_at": "={{ $json.approved_at }}",
+            "drive_file_url": "={{ $json.drive_file_url }}",
+            "exported_at": "={{ $json.accounting_exported_at }}"
+          },
+          "matchingColumns": [
+            "accounting_entry_id"
+          ],
+          "schema": [
+            {
+              "id": "accounting_entry_id",
+              "displayName": "accounting_entry_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_id",
+              "displayName": "invoice_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processing_id",
+              "displayName": "processing_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_id",
+              "displayName": "vendor_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_name",
+              "displayName": "vendor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "iban",
+              "displayName": "iban",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "risk_flags",
+              "displayName": "risk_flags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_status",
+              "displayName": "approval_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_comment",
+              "displayName": "approval_comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approved_by",
+              "displayName": "approved_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approved_at",
+              "displayName": "approved_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "drive_file_url",
+              "displayName": "drive_file_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "exported_at",
+              "displayName": "exported_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        16,
+        -176
+      ],
+      "id": "ed73e5df-bcd8-46b1-a68b-01bf90f4d3c2",
+      "name": "invoice__accounting--upsert-entry",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared =\n  $('invoice__accounting--prepare-entry').item.json;\n\nconst sheetResult = $json;\n\nconst accountingEntryId =\n  sheetResult.accounting_entry_id ??\n  prepared.accounting_entry_id ??\n  '';\n\nif (!accountingEntryId) {\n  throw new Error(\n    'ACCOUNTING_ENTRY_ID_MISSING_AFTER_EXPORT'\n  );\n}\n\nconst completedAt =\n  sheetResult.exported_at ??\n  prepared.accounting_exported_at ??\n  new Date().toISOString();\n\nreturn {\n  json: {\n    ...prepared,\n\n    status: 'accounting_exported',\n    accounting_exported: true,\n\n    accounting_entry_id:\n      accountingEntryId,\n\n    accounting_exported_at:\n      completedAt,\n\n    accounting_sheet_row_number:\n      sheetResult.row_number ??\n      sheetResult.rowNumber ??\n      null,\n\n    accounting_export_result: {\n      accounting_entry_id:\n        accountingEntryId,\n\n      invoice_id:\n        sheetResult.invoice_id ??\n        prepared.invoice_id,\n\n      approval_status:\n        sheetResult.approval_status ??\n        prepared.accounting_approval_status ??\n        'approved',\n\n      exported_at:\n        completedAt,\n    },\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -176
+      ],
+      "id": "ff1f72fe-cb63-4f88-94b5-b40f02dc4bad",
+      "name": "invoice__accounting--normalize-result"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        464,
+        -176
+      ],
+      "id": "54aee0fa-ccf5-437f-8584-be94d980c3ac",
+      "name": "invoice__result--accounting-exported"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "invoice__trigger--subworkflow": {
+      "main": [
+        [
+          {
+            "node": "invoice__condition--approved-for-accounting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__condition--approved-for-accounting": {
+      "main": [
+        [
+          {
+            "node": "invoice__accounting--prepare-entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__error--not-approved-for-accounting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__accounting--prepare-entry": {
+      "main": [
+        [
+          {
+            "node": "invoice__accounting--upsert-entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__accounting--upsert-entry": {
+      "main": [
+        [
+          {
+            "node": "invoice__accounting--normalize-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__accounting--normalize-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__result--accounting-exported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qzdUs37Qnqgurnap",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "faa4cea0-76be-40ba-bdaa-90a9d03687e5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e41969196591392860fa0180c3dcaccfc46cab480b97ef922a54ce6b7e40da4"
+  },
+  "nodeGroups": [],
+  "id": "raMbO7eSvW5RwcXp",
+  "tags": []
+}

@@ -1,0 +1,546 @@
+{
+  "name": "WF#10 - invoice__error-handler--global",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "8119d13a-91d3-42ea-a535-f6ccb08ed29b",
+      "name": "invoice__trigger--workflow-error"
+    },
+    {
+      "parameters": {
+        "jsCode": "const event = $json;\n\nconst execution =\n  event.execution || {};\n\nconst workflow =\n  event.workflow || {};\n\nconst triggerError =\n  event.trigger?.error || {};\n\nconst executionError =\n  execution.error || {};\n\nconst errorMessage =\n  String(\n    executionError.message ||\n    triggerError.message ||\n    triggerError.cause?.message ||\n    'Unknown workflow error'\n  ).trim();\n\nconst errorStack =\n  String(\n    executionError.stack ||\n    triggerError.stack ||\n    triggerError.cause?.stack ||\n    ''\n  );\n\nconst executionId =\n  String(\n    execution.id || ''\n  ).trim();\n\nconst occurredAt =\n  new Date().toISOString();\n\nconst processingIdMatch =\n  errorMessage.match(\n    /DOC-[A-Za-z0-9_-]+-\\d{2}/\n  );\n\nconst processingId =\n  processingIdMatch?.[0] || '';\n\n\nlet emailMessageId = '';\n\nif (processingId) {\n  const processingParts =\n    processingId.match(\n      /^DOC-(.+)-\\d{2}$/\n    );\n\n  if (processingParts?.[1]) {\n    emailMessageId =\n      processingParts[1];\n  }\n}\n\n\nconst explicitEmailMessageMatch =\n  errorMessage.match(\n    /email_message_id:\\s*([A-Za-z0-9_-]+)/i\n  );\n\nconst explicitEmailMessageId =\n  explicitEmailMessageMatch?.[1] || '';\n\n\nif (explicitEmailMessageId) {\n  emailMessageId =\n    explicitEmailMessageId;\n}\n\nconst workflowId =\n  String(\n    workflow.id || ''\n  ).trim();\n\nconst workflowName =\n  String(\n    workflow.name ||\n    'unknown-workflow'\n  ).trim();\n\nconst lastNode =\n  String(\n    execution.lastNodeExecuted ||\n    triggerError.node?.name ||\n    ''\n  ).trim();\n\nconst executionMode =\n  String(\n    execution.mode ||\n    event.trigger?.mode ||\n    ''\n  ).trim();\n\nconst executionUrl =\n  String(\n    execution.url || ''\n  ).trim();\n\nconst criticalWorkflowNames = [\n  'invoice__ingestion--gmail',\n  'invoice__accounting--google-sheets',\n  'invoice__completion--archive',\n  'invoice__approval-handler--telegram',\n];\n\nconst severity =\n  criticalWorkflowNames.some(name =>\n    workflowName.includes(name)\n  )\n    ? 'critical'\n    : 'error';\n\nconst errorIdBase =\n  executionId ||\n  `${Date.now()}`;\n\nconst errorId =\n  `ERR-${errorIdBase}`;\n\nreturn {\n  json: {\n    error_id:\n      errorId,\n\n    occurred_at:\n      occurredAt,\n\n    workflow_id:\n      workflowId,\n\n    workflow_name:\n      workflowName,\n\n    execution_id:\n      executionId,\n\n    execution_url:\n      executionUrl,\n\n    execution_mode:\n      executionMode,\n\n    last_node:\n      lastNode,\n\n    error_message:\n      errorMessage.slice(0, 2000),\n\n    error_stack:\n      errorStack.slice(0, 10000),\n\n    processing_id:\n      processingId,\n\n    email_message_id:\n      emailMessageId,\n\n    email_message_id_source:\n      explicitEmailMessageId\n        ? 'error_message'\n        : processingId\n          ? 'processing_id'\n          : 'not_available',\n\n    severity:\n      severity,\n\n    error_status:\n      'open',\n\n    telegram_alert_required:\n      severity === 'critical',\n\n    normalized_at:\n      occurredAt,\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "d6c2dc38-749a-481c-9a36-b06385fa12f1",
+      "name": "invoice__error--normalize-event"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2040765616,
+          "mode": "list",
+          "cachedResultName": "Processing_Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=2040765616"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "error_id": "={{ $json.error_id }}",
+            "occurred_at": "={{ $json.occurred_at }}",
+            "workflow_id": "={{ $json.occurred_at }}",
+            "workflow_name": "={{ $json.workflow_name }}",
+            "execution_id": "={{ $json.execution_id }}",
+            "execution_url": "={{ $json.execution_url }}",
+            "execution_mode": "={{ $json.execution_url }}",
+            "last_node": "={{ $json.last_node}}",
+            "error_message": "={{ $json.error_message }}",
+            "processing_id": "={{ $json.processing_id}}",
+            "email_message_id": "={{ $json.message_id}}",
+            "severity": "={{ $json.severity}}",
+            "error_status": "={{ $json.error_status}}"
+          },
+          "matchingColumns": [
+            "error_id"
+          ],
+          "schema": [
+            {
+              "id": "error_id",
+              "displayName": "error_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "occurred_at",
+              "displayName": "occurred_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_id",
+              "displayName": "workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_name",
+              "displayName": "workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_url",
+              "displayName": "execution_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_mode",
+              "displayName": "execution_mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_node",
+              "displayName": "last_node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processing_id",
+              "displayName": "processing_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_message_id",
+              "displayName": "email_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_status",
+              "displayName": "error_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        448,
+        0
+      ],
+      "id": "334ba8fb-9f9f-428f-80fb-c50788e4c885",
+      "name": "invoice__error--upsert-processing-log",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalized =\n  $('invoice__error--normalize-event').item.json;\n\nconst sheetResult =\n  $json;\n\nreturn {\n  json: {\n    ...normalized,\n\n    processing_log_updated:\n      true,\n\n    processing_log_row_number:\n      sheetResult.row_number ??\n      sheetResult.rowNumber ??\n      null,\n\n    processing_log_updated_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "68bc1ee4-bdb1-4518-ab81-f4f09ecccc05",
+      "name": "invoice__error--restore-log-result"
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $json;\n\nconst escapeHtml = value =>\n  String(value ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n\nconst escapeHtmlAttribute = value =>\n  escapeHtml(value)\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#39;');\n\nconst severity =\n  String(error.severity || 'error')\n    .trim()\n    .toLowerCase();\n\nconst severityIcon =\n  severity === 'critical'\n    ? '🚨'\n    : severity === 'warning'\n      ? '⚠️'\n      : '❌';\n\nconst workflowName =\n  String(\n    error.workflow_name ||\n    'Unknown workflow'\n  ).trim();\n\nconst lastNode =\n  String(\n    error.last_node ||\n    'Unknown node'\n  ).trim();\n\nconst executionId =\n  String(\n    error.execution_id ||\n    'Unavailable'\n  ).trim();\n\nconst executionMode =\n  String(\n    error.execution_mode ||\n    'Unknown'\n  ).trim();\n\nconst errorMessage =\n  String(\n    error.error_message ||\n    'Unknown workflow error'\n  )\n    .trim()\n    .slice(0, 1200);\n\nconst occurredAt =\n  String(\n    error.occurred_at ||\n    new Date().toISOString()\n  ).trim();\n\nconst lines = [\n  `${severityIcon} <b>Invoice automation error</b>`,\n  '',\n  `<b>Severity:</b> ${escapeHtml(severity.toUpperCase())}`,\n  `<b>Workflow:</b> ${escapeHtml(workflowName)}`,\n  `<b>Node:</b> ${escapeHtml(lastNode)}`,\n  `<b>Execution:</b> ${escapeHtml(executionId)}`,\n  `<b>Mode:</b> ${escapeHtml(executionMode)}`,\n  `<b>Occurred at:</b> ${escapeHtml(occurredAt)}`,\n];\n\nif (error.processing_id) {\n  lines.push(\n    `<b>Processing ID:</b> ${escapeHtml(error.processing_id)}`\n  );\n}\n\nif (error.email_message_id) {\n  lines.push(\n    `<b>Gmail Message ID:</b> ${escapeHtml(error.email_message_id)}`\n  );\n}\n\nif (error.gmail_error_label_added === true) {\n  lines.push(\n    '<b>Gmail status:</b> AI-Invoices-Error label added'\n  );\n} else if (error.email_message_id) {\n  lines.push(\n    '<b>Gmail status:</b> Error label was not added'\n  );\n} else {\n  lines.push(\n    '<b>Gmail status:</b> Message ID is unavailable'\n  );\n}\n\nif (error.processing_log_updated === true) {\n  lines.push(\n    `<b>Processing log:</b> Updated (${escapeHtml(error.error_id || 'unknown ID')})`\n  );\n} else {\n  lines.push(\n    '<b>Processing log:</b> Update not confirmed'\n  );\n}\n\nlines.push(\n  '',\n  '<b>Error message:</b>',\n  `<code>${escapeHtml(errorMessage)}</code>`\n);\n\nif (error.execution_url) {\n  const safeExecutionUrl =\n    escapeHtmlAttribute(\n      String(error.execution_url)\n    );\n\n  lines.push(\n    '',\n    `<a href=\"${safeExecutionUrl}\">Open failed execution</a>`\n  );\n}\n\nconst telegramErrorMessage =\n  lines.join('\\n');\n\nif (telegramErrorMessage.length > 3900) {\n  throw new Error(\n    `TELEGRAM_ERROR_MESSAGE_TOO_LONG: ${telegramErrorMessage.length}`\n  );\n}\n\nreturn {\n  json: {\n    ...error,\n\n    telegram_error_message:\n      telegramErrorMessage,\n\n    telegram_alert_prepared:\n      true,\n\n    telegram_alert_prepared_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        16
+      ],
+      "id": "6865fe15-842b-4902-9d94-460379dd69dc",
+      "name": "invoice__error--prepare-telegram-alert"
+    },
+    {
+      "parameters": {
+        "chatId": "5878118433",
+        "text": "={{ $json.telegram_error_message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        16
+      ],
+      "id": "3987998a-9c08-4cd4-92ec-0b066af37998",
+      "name": "invoice__error--send-telegram-alert",
+      "webhookId": "8e01211b-eefe-43f3-a03e-c204071ddbe6",
+      "credentials": {
+        "telegramApi": {
+          "id": "G4zgwhXjgt3QYnll",
+          "name": "invoice__credential--telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared =\n  $('invoice__error--prepare-telegram-alert').item.json;\n\nreturn {\n  json: {\n    ...prepared,\n\n    telegram_alert_sent:\n      true,\n\n    telegram_alert_sent_at:\n      new Date().toISOString(),\n\n    error_handler_completed:\n      true,\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        16
+      ],
+      "id": "780bdf4f-8165-49a6-bf1c-b769fd23364d",
+      "name": "invoice__error--normalize-result"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2448,
+        16
+      ],
+      "id": "b83a4d5a-cd4c-45e8-ab58-069a4c4c1f87",
+      "name": "invoice__result--error-handled"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1285250a-f56e-47d9-bac5-132bb0332772",
+              "leftValue": "={{\n  Boolean(\n    String($json.email_message_id ?? '').trim()\n  )\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        0
+      ],
+      "id": "ad77ec52-6ba7-4424-84b2-f583aed6652c",
+      "name": "invoice__condition--gmail-message-known"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $json.email_message_id }}",
+        "labelIds": [
+          "Label_5449836718908678426"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        -176
+      ],
+      "id": "1944c033-156f-454e-aad6-6dcb16e1b2be",
+      "name": "invoice__error--add-gmail-error-label",
+      "webhookId": "c56637f8-e95c-4366-a73c-bbb0ade3d193",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Bm0yiOT4OW5BbIrV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "removeLabels",
+        "messageId": "={{\n  $('invoice__error--restore-log-result')\n    .item.json.email_message_id\n}}",
+        "labelIds": [
+          "Label_4108445562023158677"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1312,
+        -176
+      ],
+      "id": "8c4d9a25-f298-4249-a499-cc6cf6abf0ad",
+      "name": "invoice__error--remove-gmail-source-label",
+      "webhookId": "8ed912cc-1e1f-4601-a5ae-a725007de644",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Bm0yiOT4OW5BbIrV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const error =\n  $('invoice__error--restore-log-result').item.json;\n\nreturn {\n  json: {\n    ...error,\n\n    gmail_error_label_added:\n      true,\n\n    gmail_source_label_removed:\n      true,\n\n    gmail_error_label_updated_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        -176
+      ],
+      "id": "361a334a-ace2-48f4-9e09-c5d00b1f0a15",
+      "name": "invoice__error--restore-after-gmail-label"
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  json: {\n    ...$json,\n\n    gmail_error_label_added:\n      false,\n\n    gmail_source_label_removed:\n      false,\n\n    gmail_label_skip_reason:\n      'email_message_id_not_available',\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        16
+      ],
+      "id": "64616353-df38-433d-9736-069fe1732203",
+      "name": "invoice__error--skip-gmail-label"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "invoice__trigger--workflow-error": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--normalize-event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--normalize-event": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--upsert-processing-log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--upsert-processing-log": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--restore-log-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--restore-log-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__condition--gmail-message-known",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--prepare-telegram-alert": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--send-telegram-alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--send-telegram-alert": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--normalize-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--normalize-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__result--error-handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__condition--gmail-message-known": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--add-gmail-error-label",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__error--skip-gmail-label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--add-gmail-error-label": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--remove-gmail-source-label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--remove-gmail-source-label": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--restore-after-gmail-label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--restore-after-gmail-label": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--prepare-telegram-alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__error--skip-gmail-label": {
+      "main": [
+        [
+          {
+            "node": "invoice__error--prepare-telegram-alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "3ef0e878-7595-4f38-809a-4d479f69f346",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e41969196591392860fa0180c3dcaccfc46cab480b97ef922a54ce6b7e40da4"
+  },
+  "nodeGroups": [],
+  "id": "qzdUs37Qnqgurnap",
+  "tags": []
+}

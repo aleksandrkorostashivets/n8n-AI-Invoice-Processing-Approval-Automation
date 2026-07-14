@@ -1,0 +1,555 @@
+{
+  "name": "WF#4 - invoice__manual-review--telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -864,
+        -64
+      ],
+      "id": "6a51f5f7-1e25-4e5f-8f9d-c43e91f1ec95",
+      "name": "invoice__trigger--subworkflow"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 405097830,
+          "mode": "list",
+          "cachedResultName": "Approval_Matrix",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=405097830"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "currency",
+              "lookupValue": "={{ $json.currency }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -640,
+        -64
+      ],
+      "id": "4015e3d0-e353-4973-a1e3-86d36f968b93",
+      "name": "invoice__approval-rule--lookup-currency",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItem =\n  $('invoice__trigger--subworkflow').first();\n\nif (!sourceItem) {\n  throw new Error('MANUAL_REVIEW_SOURCE_NOT_FOUND');\n}\n\nconst invoice = sourceItem.json;\n\nconst normalizeText = (value) => {\n  if (value === null || value === undefined) {\n    return '';\n  }\n\n  return String(value)\n    .replace(/\\s+/g, ' ')\n    .trim();\n};\n\nconst normalizeUpper = (value) => {\n  return normalizeText(value).toUpperCase();\n};\n\nconst normalizeBoolean = (value) => {\n  if (typeof value === 'boolean') {\n    return value;\n  }\n\n  return [\n    'true',\n    '1',\n    'yes',\n    'active'\n  ].includes(\n    normalizeText(value).toLowerCase()\n  );\n};\n\nconst normalizeAmount = (value) => {\n  if (\n    value === null ||\n    value === undefined ||\n    value === ''\n  ) {\n    return null;\n  }\n\n  const normalized = String(value)\n    .replace(/\\s/g, '')\n    .replace(/,/g, '');\n\n  const number = Number(normalized);\n\n  return Number.isFinite(number)\n    ? number\n    : null;\n};\n\nconst invoiceAmount =\n  normalizeAmount(invoice.total_amount);\n\nconst invoiceCurrency =\n  normalizeUpper(invoice.currency);\n\nconst rules = $input.all()\n  .map(item => item.json)\n  .filter(rule => {\n    if (!rule?.rule_id) {\n      return false;\n    }\n\n    const minAmount =\n      normalizeAmount(rule.min_amount);\n\n    const maxAmount =\n      normalizeAmount(rule.max_amount);\n\n    const currencyMatches =\n      normalizeUpper(rule.currency) ===\n      invoiceCurrency;\n\n    const active =\n      normalizeBoolean(rule.is_active);\n\n    const amountMatches =\n      invoiceAmount !== null &&\n      minAmount !== null &&\n      maxAmount !== null &&\n      invoiceAmount >= minAmount &&\n      invoiceAmount <= maxAmount;\n\n    return (\n      currencyMatches &&\n      active &&\n      amountMatches\n    );\n  });\n\nrules.sort((a, b) => {\n  const aRange =\n    normalizeAmount(a.max_amount) -\n    normalizeAmount(a.min_amount);\n\n  const bRange =\n    normalizeAmount(b.max_amount) -\n    normalizeAmount(b.min_amount);\n\n  return aRange - bRange;\n});\n\nconst selectedRule =\n  rules.length > 0\n    ? rules[0]\n    : null;\n\nconst resolvedManagerId =\n  normalizeText(selectedRule?.manager_id) ||\n  normalizeText(invoice.manager_id);\n\nif (!resolvedManagerId) {\n  throw new Error(\n    `MANAGER_ID_NOT_FOUND: ${invoice.processing_id}`\n  );\n}\n\nreturn [\n  {\n    json: {\n      ...invoice,\n\n      manager_id: resolvedManagerId,\n      approval_rule_id:\n        selectedRule?.rule_id ?? null,\n      approval_rule_count:\n        rules.length,\n\n      manager_resolved_at:\n        new Date().toISOString()\n    },\n\n    binary: sourceItem.binary\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        -64
+      ],
+      "id": "4783dbea-471f-4cfb-9615-46fcbe09ee3b",
+      "name": "invoice__manager--resolve-approval-rule",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const invoice = $json;\n\nconst escapeHtml = (value) => {\n  return String(value ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n};\n\nconst formatAmount = (value) => {\n  const amount = Number(value);\n\n  if (!Number.isFinite(amount)) {\n    return 'Not available';\n  }\n\n  return new Intl.NumberFormat(\n    'en-US',\n    {\n      minimumFractionDigits: 2,\n      maximumFractionDigits: 2\n    }\n  ).format(amount);\n};\n\nconst riskLabels = {\n  iban_mismatch:\n    'Bank details do not match the vendor record',\n  sender_email_mismatch:\n    'Sender email does not match the vendor record',\n  vendor_not_found:\n    'Vendor was not found in the approved vendor database',\n  vendor_inactive:\n    'Vendor is inactive',\n  vendor_tax_id_not_unique:\n    'Multiple vendors use the same Tax ID',\n  duplicate_invoice:\n    'Possible duplicate invoice detected',\n  invoice_number_reused_amount_mismatch:\n    'Invoice number already exists with a different amount',\n  total_amount_mismatch:\n    'Invoice totals are inconsistent',\n  invalid_iban_format:\n    'IBAN format is invalid',\n  low_extraction_confidence:\n    'Document extraction confidence is low'\n};\n\nconst risks = Array.isArray(invoice.risk_flags)\n  ? invoice.risk_flags\n  : [];\n\nconst riskText = risks.length > 0\n  ? risks\n      .map(flag => {\n        const label =\n          riskLabels[flag] ||\n          flag.replace(/_/g, ' ');\n\n        return `• ${escapeHtml(label)}`;\n      })\n      .join('\\n')\n  : '• Manual review was requested';\n\nconst invoiceIban =\n  escapeHtml(invoice.iban || 'Not found');\n\nconst registeredIban =\n  escapeHtml(\n    invoice.registered_iban ||\n    'Not available'\n  );\n\nconst message = [\n  '⚠️ <b>Invoice requires manual review</b>',\n  '',\n  `<b>Supplier:</b> ${escapeHtml(invoice.vendor_name)}`,\n  `<b>Invoice:</b> ${escapeHtml(invoice.invoice_number)}`,\n  `<b>Amount:</b> ${escapeHtml(invoice.currency)} ${formatAmount(invoice.total_amount)}`,\n  `<b>Invoice date:</b> ${escapeHtml(invoice.invoice_date)}`,\n  `<b>Due date:</b> ${escapeHtml(invoice.due_date)}`,\n  `<b>Sender:</b> ${escapeHtml(invoice.sender_email)}`,\n  '',\n  '<b>Detected risks:</b>',\n  riskText,\n  '',\n  '<b>Bank verification:</b>',\n  `<b>Invoice IBAN:</b> <code>${invoiceIban}</code>`,\n  `<b>Registered IBAN:</b> <code>${registeredIban}</code>`,\n  '',\n  `<a href=\"${escapeHtml(invoice.drive_file_url)}\">Open invoice PDF</a>`,\n  '',\n  `<b>Processing ID:</b> <code>${escapeHtml(invoice.processing_id)}</code>`\n].join('\\n');\n\nconst reviewCallback =\n  `review|${invoice.processing_id}`;\n\nconst rejectCallback =\n  `reject|${invoice.processing_id}`;\n\nif (reviewCallback.length > 64) {\n  throw new Error('REVIEW_CALLBACK_TOO_LONG');\n}\n\nif (rejectCallback.length > 64) {\n  throw new Error('REJECT_CALLBACK_TOO_LONG');\n}\n\nreturn {\n  json: {\n    ...invoice,\n\n    telegram_message: message,\n    review_callback_data: reviewCallback,\n    reject_callback_data: rejectCallback,\n\n    manual_review_prepared_at:\n      new Date().toISOString()\n  },\n\n  binary: $binary\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        -64
+      ],
+      "id": "10fae35c-d58e-4642-afd4-9e573ba89329",
+      "name": "invoice__message--prepare-manual-review"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.manager_id }}",
+        "text": "={{ $json.telegram_message }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔍 Review",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.review_callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "❌ Reject",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.reject_callback_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        32,
+        -64
+      ],
+      "id": "012dc2b0-23ee-4499-9fc9-a1645b593bec",
+      "name": "invoice__message--send-manual-review",
+      "webhookId": "73091e61-51b9-4691-9990-63101ae0851d",
+      "credentials": {
+        "telegramApi": {
+          "id": "G4zgwhXjgt3QYnll",
+          "name": "invoice__credential--telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItem =\n  $('invoice__message--prepare-manual-review').item;\n\nif (!sourceItem) {\n  throw new Error(\n    'MANUAL_REVIEW_MESSAGE_SOURCE_NOT_FOUND'\n  );\n}\n\nconst telegramResponse =\n  $json.result ?? $json;\n\nconst telegramMessageId =\n  telegramResponse.message_id ??\n  telegramResponse.messageId ??\n  null;\n\nconst telegramChatId =\n  telegramResponse.chat?.id ??\n  sourceItem.json.manager_id ??\n  null;\n\nif (!telegramMessageId) {\n  throw new Error(\n    'TELEGRAM_MESSAGE_ID_MISSING'\n  );\n}\n\nif (!telegramChatId) {\n  throw new Error(\n    'TELEGRAM_CHAT_ID_MISSING'\n  );\n}\n\nreturn {\n  json: {\n    ...sourceItem.json,\n\n    status: 'manual_review_pending',\n    approval_decision: 'pending',\n\n    manager_id:\n      String(telegramChatId),\n\n    telegram_message_id:\n      telegramMessageId,\n\n    telegram_chat_id:\n      String(telegramChatId),\n\n    manual_review_requested_at:\n      new Date().toISOString()\n  },\n\n  binary: sourceItem.binary\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        -64
+      ],
+      "id": "64095c5e-c669-4836-868b-0a87924110d7",
+      "name": "invoice__manual-review--prepare-registry"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "processing_id": "={{ $json.processing_id }}",
+            "invoice_id": "={{ $json.invoice_id }}",
+            "status": "={{ $json.status }}",
+            "received_at": "={{ DateTime.fromISO($json.received_at).toLocal().toISO() }}",
+            "email_message_id": "={{ $json.email_message_id }}",
+            "risk_flags": "={{ $json.risk_flags.join(', ') }}",
+            "sender_email": "={{ $json.sender_email }}",
+            "file_name": "={{ $json.file_name }}",
+            "drive_file_url": "={{ $json.drive_file_url }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "invoice_number": "={{ $json.invoice_number }}",
+            "invoice_date": "={{ $json.invoice_date }}",
+            "due_date": "={{ $json.due_date }}",
+            "currency": "={{ $json.currency }}",
+            "total_amount": "={{ $json.total_amount }}",
+            "iban": "={{ $json.iban }}",
+            "vendor_found": "={{ $json.vendor_found }}",
+            "bank_details_match": "={{ $json.bank_details_match }}",
+            "is_duplicate": "={{ $json.is_duplicate }}",
+            "validation_result": "={{ $json.validation_result }}",
+            "approval_decision": "={{ $json.approval_decision }}",
+            "manager_id": "={{ $json.manager_id }}",
+            "approval_comment": "={{ $json.approval_comment }}",
+            "processed_at": "={{ $json.processed_at }}",
+            "vendor_id": "={{ $json.vendor_id ?? '' }}"
+          },
+          "matchingColumns": [
+            "processing_id"
+          ],
+          "schema": [
+            {
+              "id": "invoice_id",
+              "displayName": "invoice_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processing_id",
+              "displayName": "processing_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_message_id",
+              "displayName": "email_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender_email",
+              "displayName": "sender_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "file_name",
+              "displayName": "file_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "drive_file_url",
+              "displayName": "drive_file_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_name",
+              "displayName": "vendor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_id",
+              "displayName": "vendor_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "iban",
+              "displayName": "iban",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_found",
+              "displayName": "vendor_found",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank_details_match",
+              "displayName": "bank_details_match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_duplicate",
+              "displayName": "is_duplicate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "validation_result",
+              "displayName": "validation_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "risk_flags",
+              "displayName": "risk_flags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "manager_id",
+              "displayName": "manager_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_decision",
+              "displayName": "approval_decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_comment",
+              "displayName": "approval_comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        480,
+        -64
+      ],
+      "id": "0227414b-17a6-47ca-8093-af833e00e19c",
+      "name": "invoice__record--upsert-validation",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const manualReviewItem =\n  $('invoice__manual-review--prepare-registry').item;\n\nif (!manualReviewItem) {\n  throw new Error(\n    'MANUAL_REVIEW_RESULT_NOT_FOUND'\n  );\n}\n\nreturn {\n  json: {\n    ...manualReviewItem.json,\n\n    registry_updated: true,\n    registry_row_number:\n      $json.row_number ??\n      $json.rowNumber ??\n      null,\n\n    manual_review_workflow_completed_at:\n      new Date().toISOString()\n  },\n\n  binary: manualReviewItem.binary\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -64
+      ],
+      "id": "ad4e69b1-da7c-4c1a-8af3-611f3b6d0b51",
+      "name": "invoice__manual-review--return-result"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "invoice__trigger--subworkflow": {
+      "main": [
+        [
+          {
+            "node": "invoice__approval-rule--lookup-currency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__approval-rule--lookup-currency": {
+      "main": [
+        [
+          {
+            "node": "invoice__manager--resolve-approval-rule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__manager--resolve-approval-rule": {
+      "main": [
+        [
+          {
+            "node": "invoice__message--prepare-manual-review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__message--prepare-manual-review": {
+      "main": [
+        [
+          {
+            "node": "invoice__message--send-manual-review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__message--send-manual-review": {
+      "main": [
+        [
+          {
+            "node": "invoice__manual-review--prepare-registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__manual-review--prepare-registry": {
+      "main": [
+        [
+          {
+            "node": "invoice__record--upsert-validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__record--upsert-validation": {
+      "main": [
+        [
+          {
+            "node": "invoice__manual-review--return-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qzdUs37Qnqgurnap",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "ad3563b7-6ed8-4ee9-a637-716b9cccd64a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e41969196591392860fa0180c3dcaccfc46cab480b97ef922a54ce6b7e40da4"
+  },
+  "nodeGroups": [],
+  "id": "6JJ3s7LClwFAhTyt",
+  "tags": []
+}

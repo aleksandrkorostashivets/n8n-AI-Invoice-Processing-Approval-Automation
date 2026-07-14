@@ -1,0 +1,549 @@
+{
+  "name": "WF#3 - invoice__validation--business-rules",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1520,
+        -64
+      ],
+      "id": "2b78ca09-d4b8-4509-8d57-451a98844146",
+      "name": "invoice__trigger--subworkflow"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 970771069,
+          "mode": "list",
+          "cachedResultName": "Vendors",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=970771069"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "vendor_tax_id",
+              "lookupValue": "={{ $json.vendor_tax_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1312,
+        -64
+      ],
+      "id": "cba6a554-84dc-4b52-8e24-b11b5df56ceb",
+      "name": "invoice__vendor--lookup-tax-id",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItem =\n  $('invoice__trigger--subworkflow').first();\n\nif (!sourceItem) {\n  throw new Error('VALIDATION_SOURCE_INVOICE_NOT_FOUND');\n}\n\nconst invoice = sourceItem.json;\n\nconst lookupItems = $input.all();\n\nconst vendorMatches = lookupItems\n  .map(item => item.json)\n  .filter(vendor => {\n    return Boolean(\n      vendor &&\n      vendor.vendor_id &&\n      vendor.vendor_tax_id\n    );\n  });\n\nconst normalizeText = (value) => {\n  if (value === null || value === undefined) {\n    return '';\n  }\n\n  return String(value)\n    .replace(/\\s+/g, ' ')\n    .trim();\n};\n\nconst normalizeUpper = (value) => {\n  return normalizeText(value).toUpperCase();\n};\n\nconst normalizeEmail = (value) => {\n  return normalizeText(value).toLowerCase();\n};\n\nconst normalizeBankCode = (value) => {\n  return normalizeUpper(value)\n    .replace(/[^A-Z0-9]/g, '');\n};\n\nconst normalizeBoolean = (value) => {\n  if (typeof value === 'boolean') {\n    return value;\n  }\n\n  return [\n    'true',\n    '1',\n    'yes',\n    'active'\n  ].includes(\n    normalizeText(value).toLowerCase()\n  );\n};\n\nconst riskFlags = new Set(\n  Array.isArray(invoice.risk_flags)\n    ? invoice.risk_flags\n    : []\n);\n\nlet vendorFound = false;\nlet vendorRecordCount = vendorMatches.length;\nlet vendorRecord = null;\n\nlet vendorActive = false;\nlet senderEmailMatch = false;\nlet bankDetailsMatch = false;\nlet currencyMatch = false;\nlet vendorTaxIdMatch = false;\n\nif (vendorRecordCount === 0) {\n  riskFlags.add('vendor_not_found');\n}\n\nif (vendorRecordCount > 1) {\n  riskFlags.add('vendor_tax_id_not_unique');\n}\n\nif (vendorRecordCount === 1) {\n  vendorFound = true;\n  vendorRecord = vendorMatches[0];\n\n  vendorActive = normalizeBoolean(\n    vendorRecord.is_active\n  );\n\n  vendorTaxIdMatch =\n    normalizeUpper(invoice.vendor_tax_id) ===\n    normalizeUpper(vendorRecord.vendor_tax_id);\n\n  senderEmailMatch =\n    normalizeEmail(invoice.sender_email) ===\n    normalizeEmail(vendorRecord.contact_email);\n\n  bankDetailsMatch =\n    normalizeBankCode(invoice.iban) ===\n    normalizeBankCode(vendorRecord.iban);\n\n  currencyMatch =\n    normalizeUpper(invoice.currency) ===\n    normalizeUpper(vendorRecord.default_currency);\n\n  if (!vendorActive) {\n    riskFlags.add('vendor_inactive');\n  }\n\n  if (!vendorTaxIdMatch) {\n    riskFlags.add('vendor_tax_id_mismatch');\n  }\n\n  if (!senderEmailMatch) {\n    riskFlags.add('sender_email_mismatch');\n  }\n\n  if (!bankDetailsMatch) {\n    riskFlags.add('iban_mismatch');\n  }\n\n  if (!currencyMatch) {\n    riskFlags.add('currency_mismatch');\n  }\n}\n\nconst criticalVendorFlags = [\n  'vendor_not_found',\n  'vendor_tax_id_not_unique',\n  'vendor_inactive',\n  'vendor_tax_id_mismatch',\n  'sender_email_mismatch',\n  'iban_mismatch'\n];\n\nconst normalizedRiskFlags = [...riskFlags]\n  .filter(Boolean)\n  .sort();\n\nconst requiresManualReview =\n  normalizedRiskFlags.some(flag =>\n    criticalVendorFlags.includes(flag)\n  );\n\nreturn [\n  {\n    json: {\n      ...invoice,\n\n      status: 'vendor_validated',\n\n      vendor_found: vendorFound,\n      vendor_record_count: vendorRecordCount,\n      vendor_id:\n        vendorRecord?.vendor_id ?? null,\n      vendor_active: vendorActive,\n\n      vendor_tax_id_match: vendorTaxIdMatch,\n      sender_email_match: senderEmailMatch,\n      bank_details_match: bankDetailsMatch,\n      currency_match: currencyMatch,\n\n      registered_vendor_name:\n        vendorRecord?.vendor_name ?? null,\n      registered_contact_email:\n        vendorRecord?.contact_email ?? null,\n      registered_iban:\n        vendorRecord?.iban ?? null,\n      registered_currency:\n        vendorRecord?.default_currency ?? null,\n\n      manager_id:\n        vendorRecord?.manager_id ??\n        invoice.manager_id ??\n        '',\n\n      risk_flags: normalizedRiskFlags,\n      requires_manual_review: requiresManualReview,\n\n      vendor_validated_at:\n        new Date().toISOString()\n    },\n\n    binary: sourceItem.binary\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        -64
+      ],
+      "id": "25891deb-74f7-42f5-a3c7-fc4b702d6a46",
+      "name": "invoice__vendor--validate-record"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "invoice_id",
+              "lookupValue": "={{ $json.invoice_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -896,
+        -64
+      ],
+      "id": "4acfe9d2-6dae-4a7a-98e4-5f0a4df71769",
+      "name": "invoice__duplicate--lookup-invoice-id",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItem =\n  $('invoice__vendor--validate-record').first();\n\nif (!sourceItem) {\n  throw new Error('DUPLICATE_SOURCE_INVOICE_NOT_FOUND');\n}\n\nconst invoice = sourceItem.json;\n\nconst lookupRows = $input.all()\n  .map(item => item.json)\n  .filter(row => {\n    return Boolean(\n      row &&\n      row.invoice_id\n    );\n  });\n\nconst normalizeText = (value) => {\n  if (value === null || value === undefined) {\n    return '';\n  }\n\n  return String(value)\n    .replace(/\\s+/g, ' ')\n    .trim();\n};\n\nconst normalizeUpper = (value) => {\n  return normalizeText(value).toUpperCase();\n};\n\nconst normalizeAmount = (value) => {\n  if (\n    value === null ||\n    value === undefined ||\n    value === ''\n  ) {\n    return null;\n  }\n\n  const normalized = String(value)\n    .replace(/\\s/g, '')\n    .replace(/,/g, '');\n\n  const number = Number(normalized);\n\n  return Number.isFinite(number)\n    ? Math.round(number * 100) / 100\n    : null;\n};\n\nconst currentProcessingId =\n  normalizeText(invoice.processing_id);\n\nconst currentInvoiceId =\n  normalizeUpper(invoice.invoice_id);\n\nconst currentAmount =\n  normalizeAmount(invoice.total_amount);\n\nconst duplicateRows = lookupRows.filter(row => {\n  const rowInvoiceId =\n    normalizeUpper(row.invoice_id);\n\n  const rowProcessingId =\n    normalizeText(row.processing_id);\n\n  return (\n    rowInvoiceId === currentInvoiceId &&\n    rowProcessingId !== currentProcessingId\n  );\n});\n\nconst exactDuplicateRows = [];\nconst amountMismatchRows = [];\n\nfor (const row of duplicateRows) {\n  const existingAmount =\n    normalizeAmount(row.total_amount);\n\n  if (\n    currentAmount !== null &&\n    existingAmount !== null &&\n    Math.abs(currentAmount - existingAmount) <= 0.01\n  ) {\n    exactDuplicateRows.push(row);\n  } else {\n    amountMismatchRows.push(row);\n  }\n}\n\nconst riskFlags = new Set(\n  Array.isArray(invoice.risk_flags)\n    ? invoice.risk_flags\n    : []\n);\n\nif (exactDuplicateRows.length > 0) {\n  riskFlags.add('duplicate_invoice');\n}\n\nif (amountMismatchRows.length > 0) {\n  riskFlags.add(\n    'invoice_number_reused_amount_mismatch'\n  );\n}\n\nconst isDuplicate =\n  duplicateRows.length > 0;\n\nconst normalizedRiskFlags = [...riskFlags]\n  .filter(Boolean)\n  .sort();\n\nconst requiresManualReview =\n  Boolean(invoice.requires_manual_review) ||\n  isDuplicate;\n\nreturn [\n  {\n    json: {\n      ...invoice,\n\n      status: 'duplicate_validated',\n\n      is_duplicate: isDuplicate,\n      duplicate_record_count:\n        duplicateRows.length,\n      exact_duplicate_count:\n        exactDuplicateRows.length,\n      amount_mismatch_count:\n        amountMismatchRows.length,\n\n      duplicate_processing_ids:\n        duplicateRows\n          .map(row => row.processing_id)\n          .filter(Boolean),\n\n      duplicate_drive_urls:\n        duplicateRows\n          .map(row => row.drive_file_url)\n          .filter(Boolean),\n\n      risk_flags: normalizedRiskFlags,\n      requires_manual_review:\n        requiresManualReview,\n\n      duplicate_validated_at:\n        new Date().toISOString()\n    },\n\n    binary: sourceItem.binary\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        -64
+      ],
+      "id": "4dc1878e-bf60-4e7c-a228-34a4f072d9bf",
+      "name": "invoice__duplicate--validate-business-key"
+    },
+    {
+      "parameters": {
+        "jsCode": "const invoice = $json;\n\nconst normalizeArray = (value) => {\n  if (!Array.isArray(value)) {\n    return [];\n  }\n\n  return [...new Set(\n    value\n      .map(item => String(item).trim())\n      .filter(Boolean)\n  )].sort();\n};\n\nconst riskFlags = normalizeArray(\n  invoice.risk_flags\n);\n\nconst missingFields = normalizeArray(\n  invoice.missing_fields\n);\n\nconst structuralFlags = [\n  'invalid_invoice_date',\n  'invalid_due_date',\n  'due_date_before_invoice_date',\n  'invalid_total_amount',\n  'invalid_currency',\n  'invalid_iban_format',\n  'total_amount_mismatch',\n  'low_extraction_confidence'\n];\n\nconst manualReviewFlags = [\n  'vendor_not_found',\n  'vendor_tax_id_not_unique',\n  'vendor_inactive',\n  'vendor_tax_id_mismatch',\n  'sender_email_mismatch',\n  'iban_mismatch',\n  'duplicate_invoice',\n  'invoice_number_reused_amount_mismatch'\n];\n\nconst warningFlags = [\n  'currency_mismatch'\n];\n\nconst hasStructuralProblem =\n  invoice.extraction_valid === false ||\n  missingFields.length > 0 ||\n  riskFlags.some(flag =>\n    structuralFlags.includes(flag)\n  );\n\nconst hasManualReviewProblem =\n  Boolean(invoice.requires_manual_review) ||\n  riskFlags.some(flag =>\n    manualReviewFlags.includes(flag)\n  );\n\nconst hasWarning =\n  riskFlags.some(flag =>\n    warningFlags.includes(flag)\n  );\n\nlet validationResult = 'valid';\nlet status = 'validated';\n\nif (hasStructuralProblem) {\n  validationResult = 'invalid';\n  status = 'validation_failed';\n} else if (hasManualReviewProblem) {\n  validationResult = 'manual_review';\n  status = 'manual_review';\n} else if (hasWarning || riskFlags.length > 0) {\n  validationResult = 'warning';\n  status = 'validation_warning';\n}\n\nconst parseIsoDate = (value) => {\n  if (\n    typeof value !== 'string' ||\n    !/^\\d{4}-\\d{2}-\\d{2}$/.test(value)\n  ) {\n    return null;\n  }\n\n  const date = new Date(`${value}T00:00:00Z`);\n\n  return Number.isNaN(date.getTime())\n    ? null\n    : date;\n};\n\nconst dueDate = parseIsoDate(\n  invoice.due_date\n);\n\nconst now = new Date();\n\nconst todayUtc = new Date(\n  Date.UTC(\n    now.getUTCFullYear(),\n    now.getUTCMonth(),\n    now.getUTCDate()\n  )\n);\n\nlet isOverdue = false;\nlet daysUntilDue = null;\n\nif (dueDate) {\n  const differenceMs =\n    dueDate.getTime() - todayUtc.getTime();\n\n  daysUntilDue = Math.ceil(\n    differenceMs / 86400000\n  );\n\n  isOverdue = daysUntilDue < 0;\n}\n\nif (isOverdue) {\n  if (!riskFlags.includes('invoice_overdue')) {\n    riskFlags.push('invoice_overdue');\n    riskFlags.sort();\n  }\n\n  if (validationResult === 'valid') {\n    validationResult = 'warning';\n    status = 'validation_warning';\n  }\n}\n\nconst validationSummary = {\n  extraction_valid:\n    Boolean(invoice.extraction_valid),\n  vendor_found:\n    Boolean(invoice.vendor_found),\n  vendor_active:\n    Boolean(invoice.vendor_active),\n  sender_email_match:\n    Boolean(invoice.sender_email_match),\n  bank_details_match:\n    Boolean(invoice.bank_details_match),\n  currency_match:\n    Boolean(invoice.currency_match),\n  is_duplicate:\n    Boolean(invoice.is_duplicate),\n  is_overdue: isOverdue\n};\n\nreturn {\n  json: {\n    ...invoice,\n\n    status,\n    validation_result: validationResult,\n\n    risk_flags: riskFlags,\n    missing_fields: missingFields,\n\n    is_overdue: isOverdue,\n    days_until_due: daysUntilDue,\n\n    requires_manual_review:\n      validationResult === 'manual_review',\n\n    validation_summary:\n      validationSummary,\n\n    validated_at:\n      new Date().toISOString()\n  },\n\n  binary: $binary\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        -64
+      ],
+      "id": "2acc9d1f-c597-45fe-87d8-6595eca93d6e",
+      "name": "invoice__validation--finalize-result"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "processing_id": "={{ $json.processing_id }}",
+            "invoice_id": "={{ $json.invoice_id }}",
+            "status": "={{ $json.status }}",
+            "received_at": "={{ DateTime.fromISO($json.received_at).toLocal().toISO() }}",
+            "email_message_id": "={{ $json.email_message_id }}",
+            "risk_flags": "={{ $json.risk_flags.join(', ') }}",
+            "sender_email": "={{ $json.sender_email }}",
+            "file_name": "={{ $json.file_name }}",
+            "drive_file_url": "={{ $json.drive_file_url }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "invoice_number": "={{ $json.invoice_number }}",
+            "invoice_date": "={{ $json.invoice_date }}",
+            "due_date": "={{ $json.due_date }}",
+            "currency": "={{ $json.currency }}",
+            "total_amount": "={{ $json.total_amount }}",
+            "iban": "={{ $json.iban }}",
+            "vendor_found": "={{ $json.vendor_found }}",
+            "bank_details_match": "={{ $json.bank_details_match }}",
+            "is_duplicate": "={{ $json.is_duplicate }}",
+            "validation_result": "={{ $json.validation_result }}",
+            "approval_decision": "={{ $json.approval_decision }}",
+            "manager_id": "={{ $json.manager_id }}",
+            "approval_comment": "={{ $json.approval_comment }}",
+            "processed_at": "={{ $json.processed_at }}",
+            "vendor_id": "={{ $json.vendor_id ?? '' }}"
+          },
+          "matchingColumns": [
+            "processing_id"
+          ],
+          "schema": [
+            {
+              "id": "invoice_id",
+              "displayName": "invoice_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processing_id",
+              "displayName": "processing_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_message_id",
+              "displayName": "email_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender_email",
+              "displayName": "sender_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "file_name",
+              "displayName": "file_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "drive_file_url",
+              "displayName": "drive_file_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_name",
+              "displayName": "vendor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_id",
+              "displayName": "vendor_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "iban",
+              "displayName": "iban",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_found",
+              "displayName": "vendor_found",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank_details_match",
+              "displayName": "bank_details_match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_duplicate",
+              "displayName": "is_duplicate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "validation_result",
+              "displayName": "validation_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "risk_flags",
+              "displayName": "risk_flags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "manager_id",
+              "displayName": "manager_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_decision",
+              "displayName": "approval_decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_comment",
+              "displayName": "approval_comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -272,
+        -64
+      ],
+      "id": "c2aa4fff-c20f-4728-a6f6-a9e5782f7cd5",
+      "name": "invoice__record--upsert-validation",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const validationItem =\n  $('invoice__validation--finalize-result').item;\n\nif (!validationItem) {\n  throw new Error('FINAL_VALIDATION_RESULT_NOT_FOUND');\n}\n\nreturn {\n  json: {\n    ...validationItem.json,\n\n    registry_updated: true,\n    registry_row_number:\n      $json.row_number ??\n      $json.rowNumber ??\n      null,\n\n    validation_workflow_completed_at:\n      new Date().toISOString()\n  },\n\n  binary: validationItem.binary\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -64
+      ],
+      "id": "9411f272-1926-45d6-a133-d13f118a46b2",
+      "name": "invoice__validation--return-result"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "invoice__trigger--subworkflow": {
+      "main": [
+        [
+          {
+            "node": "invoice__vendor--lookup-tax-id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__vendor--lookup-tax-id": {
+      "main": [
+        [
+          {
+            "node": "invoice__vendor--validate-record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__vendor--validate-record": {
+      "main": [
+        [
+          {
+            "node": "invoice__duplicate--lookup-invoice-id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__duplicate--lookup-invoice-id": {
+      "main": [
+        [
+          {
+            "node": "invoice__duplicate--validate-business-key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__duplicate--validate-business-key": {
+      "main": [
+        [
+          {
+            "node": "invoice__validation--finalize-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__validation--finalize-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__record--upsert-validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__record--upsert-validation": {
+      "main": [
+        [
+          {
+            "node": "invoice__validation--return-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qzdUs37Qnqgurnap",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "96f30bd0-f797-4c22-8369-05e82e12d598",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e41969196591392860fa0180c3dcaccfc46cab480b97ef922a54ce6b7e40da4"
+  },
+  "nodeGroups": [],
+  "id": "Xu7KVb9bZgxOJcx2",
+  "tags": []
+}

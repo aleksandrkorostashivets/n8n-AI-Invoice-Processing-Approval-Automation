@@ -1,0 +1,1280 @@
+{
+  "name": "WF#1 - invoice__ingestion--gmail",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "labelIds": [
+            "Label_4108445562023158677"
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -608,
+        -112
+      ],
+      "id": "bcbb62fb-6e3c-43fa-bbfd-48b9270bc2c3",
+      "name": "invoice__trigger--gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Bm0yiOT4OW5BbIrV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "simple": false,
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -384,
+        -112
+      ],
+      "id": "c1400af3-bc8b-4aa0-bc1a-74ef512edfbb",
+      "name": "invoice__message--get-attachments",
+      "webhookId": "353099b9-7608-4c13-965f-2d8f46bf71ee",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Bm0yiOT4OW5BbIrV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItems = $input.all();\nconst outputItems = [];\n\nfor (\n  let itemIndex = 0;\n  itemIndex < inputItems.length;\n  itemIndex++\n) {\n  const item =\n    inputItems[itemIndex];\n\n  const binaryFiles =\n    item.binary ?? {};\n\n  const pdfFiles = [];\n\n  for (\n    const [binaryKey, file]\n    of Object.entries(binaryFiles)\n  ) {\n    const fileName =\n      String(file.fileName ?? '');\n\n    const mimeType =\n      String(file.mimeType ?? '');\n\n    const fileExtension =\n      String(file.fileExtension ?? '');\n\n    const isPdf =\n      mimeType.toLowerCase() ===\n        'application/pdf' ||\n      fileExtension.toLowerCase() ===\n        'pdf' ||\n      fileName.toLowerCase().endsWith(\n        '.pdf'\n      );\n\n    if (!isPdf) {\n      continue;\n    }\n\n    pdfFiles.push({\n      binaryKey,\n      file,\n    });\n  }\n\n  for (\n    let attachmentIndex = 0;\n    attachmentIndex < pdfFiles.length;\n    attachmentIndex++\n  ) {\n    const {\n      binaryKey,\n      file,\n    } = pdfFiles[attachmentIndex];\n\n    outputItems.push({\n      json: {\n        email_message_id:\n          item.json.id ?? '',\n\n        email_thread_id:\n          item.json.threadId ?? '',\n\n        sender_email:\n          item.json.from?.value?.[0]\n            ?.address ?? '',\n\n        sender_name:\n          item.json.from?.value?.[0]\n            ?.name ?? '',\n\n        email_subject:\n          item.json.subject ?? '',\n\n        received_at:\n          item.json.date ?? '',\n\n        email_message_header_id:\n          item.json.messageId ?? '',\n\n        source_binary_key:\n          binaryKey,\n\n        file_name:\n          file.fileName ?? '',\n\n        mime_type:\n          file.mimeType ?? '',\n\n        file_extension:\n          file.fileExtension ?? '',\n\n        attachment_index:\n          attachmentIndex,\n\n        attachment_count:\n          pdfFiles.length,\n\n        status:\n          'received',\n      },\n\n      binary: {\n        invoice_file:\n          file,\n      },\n\n      pairedItem: {\n        item:\n          itemIndex,\n      },\n    });\n  }\n}\n\nreturn outputItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        -112
+      ],
+      "id": "9816640b-c730-4fa1-9ca8-f750899b1141",
+      "name": "invoice__attachment--split-pdf",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\n\nconst emailMessageId = String(data.email_message_id ?? '').trim();\nconst attachmentIndex = Number(data.attachment_index ?? 0);\n\nif (!emailMessageId) {\n  throw new Error('EMAIL_MESSAGE_ID_MISSING');\n}\n\nconst paddedAttachmentIndex = String(attachmentIndex).padStart(2, '0');\n\nconst processingId =\n  `DOC-${emailMessageId}-${paddedAttachmentIndex}`;\n\nconst originalFileName =\n  String(data.file_name ?? 'invoice.pdf').trim();\n\nconst fileExtension =\n  String(data.file_extension ?? 'pdf')\n    .toLowerCase()\n    .replace(/[^a-z0-9]/g, '') || 'pdf';\n\nconst baseFileName = originalFileName\n  .replace(/\\.[^/.]+$/, '')\n  .normalize('NFKD')\n  .replace(/[^\\w\\s-]/g, '')\n  .trim()\n  .replace(/\\s+/g, '-')\n  .replace(/-+/g, '-')\n  .toLowerCase()\n  .slice(0, 80);\n\nconst safeBaseFileName =\n  baseFileName || 'invoice-document';\n\nconst storageFileName =\n  `${processingId}__${safeBaseFileName}.${fileExtension}`;\n\nreturn {\n  json: {\n    ...data,\n    processing_id: processingId,\n    original_file_name: originalFileName,\n    storage_file_name: storageFileName,\n    processing_started_at: new Date().toISOString(),\n    workflow_name: 'invoice__ingestion--gmail',\n    workflow_version: '1.0.0',\n    status: 'received'\n  },\n  binary: $binary\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        -112
+      ],
+      "id": "a242700f-8751-4e5d-bd4a-2a3f6d217cff",
+      "name": "invoice__document--prepare-metadata"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "processing_id",
+              "lookupValue": "={{ $json.processing_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        384,
+        -112
+      ],
+      "id": "fcce7f9d-c747-4eec-b2d7-969511c431b8",
+      "name": "invoice__duplicate--lookup-processing-id",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItem =\n  $('invoice__document--prepare-metadata').item;\n\nif (!sourceItem) {\n  throw new Error('SOURCE_DOCUMENT_NOT_FOUND');\n}\n\nif (!sourceItem.binary?.invoice_file) {\n  throw new Error('INVOICE_BINARY_NOT_FOUND');\n}\n\nconst storageFileName = sourceItem.json.storage_file_name;\n\nif (!storageFileName) {\n  throw new Error('STORAGE_FILE_NAME_MISSING');\n}\n\nreturn {\n  json: {\n    ...sourceItem.json,\n    duplicate_check: 'not_found',\n    duplicate_checked_at: new Date().toISOString(),\n    status: 'ready_for_storage'\n  },\n  binary: {\n    invoice_file: {\n      ...sourceItem.binary.invoice_file,\n      fileName: storageFileName\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        -336
+      ],
+      "id": "c23b94de-3c2f-49f0-9b3d-44224031cbcd",
+      "name": "invoice__document--restore-new"
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "invoice_file",
+        "name": "={{ $json.storage_file_name }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1JI27A92wArNyNyIKD6cBcXoVMypa3t0N",
+          "mode": "list",
+          "cachedResultName": "01_Inbox",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1JI27A92wArNyNyIKD6cBcXoVMypa3t0N"
+        },
+        "options": {
+          "simplifyOutput": true
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1408,
+        -336
+      ],
+      "id": "b4cc1672-17c1-41e0-aa72-1719058f0005",
+      "name": "invoice__file--upload-inbox",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JLFTJj6Q3R2GhW31",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const driveFile = $json;\n\nconst sourceItem =\n  $('invoice__document--restore-new').item;\n\nif (!driveFile.id) {\n  throw new Error('DRIVE_FILE_ID_MISSING');\n}\n\nif (!sourceItem) {\n  throw new Error('SOURCE_DOCUMENT_NOT_FOUND');\n}\n\nif (!sourceItem.binary?.invoice_file) {\n  throw new Error('INVOICE_BINARY_NOT_FOUND');\n}\n\nconst driveFileUrl =\n  `https://drive.google.com/file/d/${driveFile.id}/view`;\n\nreturn {\n  json: {\n    invoice_id: '',\n    processing_id: sourceItem.json.processing_id,\n    status: 'file_stored',\n    received_at: sourceItem.json.received_at,\n    email_message_id: sourceItem.json.email_message_id,\n    sender_email: sourceItem.json.sender_email,\n    file_name: sourceItem.json.original_file_name,\n    drive_file_url: driveFileUrl,\n\n    vendor_name: '',\n    invoice_number: '',\n    invoice_date: '',\n    due_date: '',\n    currency: '',\n    total_amount: '',\n    iban: '',\n\n    vendor_found: '',\n    bank_details_match: '',\n    is_duplicate: '',\n    validation_result: '',\n    risk_flags: '',\n\n    manager_id: '',\n    approval_decision: '',\n    approval_comment: '',\n    processed_at: '',\n\n    drive_file_id: driveFile.id,\n    storage_file_name: driveFile.name,\n    file_stored_at: new Date().toISOString()\n  },\n\n  binary: {\n    invoice_file: sourceItem.binary.invoice_file\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        -336
+      ],
+      "id": "d6a630f8-2caf-498e-acab-5291f359c21d",
+      "name": "invoice__record--prepare-received"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "invoice_id": "={{ $json.invoice_id }}",
+            "processing_id": "={{ $json.processing_id }}",
+            "status": "={{ $json.status }}",
+            "received_at": "={{ DateTime.fromISO($json.received_at).toLocal().toISO() }}",
+            "email_message_id": "={{ $json.email_message_id }}",
+            "sender_email": "={{ $json.sender_email }}",
+            "file_name": "={{ $json.file_name }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "invoice_number": "={{ $json.invoice_number }}",
+            "invoice_date": "={{ $json.invoice_date }}",
+            "due_date": "={{ $json.due_date }}",
+            "currency": "={{ $json.currency }}",
+            "total_amount": "={{ $json.total_amount }}",
+            "iban": "={{ $json.iban }}",
+            "vendor_found": "={{ $json.vendor_found }}",
+            "bank_details_match": "={{ $json.bank_details_match }}",
+            "is_duplicate": "={{ $json.is_duplicate }}",
+            "validation_result": "={{ $json.validation_result }}",
+            "risk_flags": "={{ $json.risk_flags }}",
+            "manager_id": "={{ $json.manager_id }}",
+            "approval_decision": "={{ $json.approval_decision }}",
+            "approval_comment": "={{ $json.approval_comment }}",
+            "processed_at": "={{ $json.processed_at }}",
+            "drive_file_url": "={{ $json.drive_file_url }}"
+          },
+          "matchingColumns": [
+            "processing_id"
+          ],
+          "schema": [
+            {
+              "id": "invoice_id",
+              "displayName": "invoice_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processing_id",
+              "displayName": "processing_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_message_id",
+              "displayName": "email_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender_email",
+              "displayName": "sender_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "file_name",
+              "displayName": "file_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "drive_file_url",
+              "displayName": "drive_file_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vendor_name",
+              "displayName": "vendor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "iban",
+              "displayName": "iban",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_found",
+              "displayName": "vendor_found",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank_details_match",
+              "displayName": "bank_details_match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_duplicate",
+              "displayName": "is_duplicate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "validation_result",
+              "displayName": "validation_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "risk_flags",
+              "displayName": "risk_flags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "manager_id",
+              "displayName": "manager_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_decision",
+              "displayName": "approval_decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_comment",
+              "displayName": "approval_comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1792,
+        -336
+      ],
+      "id": "64557206-825a-47c1-8937-b37b83ad4b6d",
+      "name": "invoice__record--upsert-received",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const registryData = $json;\n\nconst sourceItem =\n  $('invoice__record--prepare-received').item;\n\nif (!sourceItem) {\n  throw new Error('SOURCE_DOCUMENT_NOT_FOUND');\n}\n\nif (!sourceItem.binary?.invoice_file) {\n  throw new Error('INVOICE_BINARY_NOT_FOUND');\n}\n\nreturn {\n  json: {\n    ...sourceItem.json,\n    ...registryData,\n    status: 'extraction_pending',\n    extraction_started_at: new Date().toISOString()\n  },\n  binary: {\n    invoice_file: sourceItem.binary.invoice_file\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        -336
+      ],
+      "id": "1e61ea63-0209-40cf-b8eb-d4a9c12fb773",
+      "name": "invoice__document--restore-for-extraction"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZIcw7H7wColzsj0",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZIcw7H7wColzsj0",
+          "cachedResultName": "WF#2 - invoice__extraction--document"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [
+            "invoice__documentrestoreforextraction_item"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2160,
+        -128
+      ],
+      "name": "invoice__subworkflow--extract-document",
+      "id": "65e3ff2b-d97d-4fa1-bc67-053a563602ff"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Xu7KVb9bZgxOJcx2",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Xu7KVb9bZgxOJcx2",
+          "cachedResultName": "WF#3 - invoice__validation--business-rules"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2400,
+        -128
+      ],
+      "id": "b7ffe86b-dcce-4f6e-98e3-15dc8104a3a2",
+      "name": "invoice__subworkflow--validate-invoice"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{\n  ['valid', 'warning'].includes(\n    String($json.validation_result ?? '')\n  )\n    ? 'approval'\n    : ['manual_review', 'invalid'].includes(\n        String($json.validation_result ?? '')\n      )\n      ? 'manual_review'\n      : 'error'\n}}",
+                    "rightValue": "approval",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "64dc429c-5bfa-4ec6-87a7-8f5eeb39f8f8"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "approval"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "68b8f5e3-855d-44aa-94ca-4d5ef9b04f3a",
+                    "leftValue": "={{\n  ['valid', 'warning'].includes(\n    String($json.validation_result ?? '')\n  )\n    ? 'approval'\n    : ['manual_review', 'invalid'].includes(\n        String($json.validation_result ?? '')\n      )\n      ? 'manual_review'\n      : 'error'\n}}",
+                    "rightValue": "manual_review",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "manual_review"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "92a63152-9fde-4945-bda1-2d697cf398ea",
+                    "leftValue": "={{\n  ['valid', 'warning'].includes(\n    String($json.validation_result ?? '')\n  )\n    ? 'approval'\n    : ['manual_review', 'invalid'].includes(\n        String($json.validation_result ?? '')\n      )\n      ? 'manual_review'\n      : 'error'\n}}",
+                    "rightValue": "error",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "error"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2624,
+        -144
+      ],
+      "id": "2b04566f-dc94-4f77-a813-0dccceaaf545",
+      "name": "invoice__route--validation-result"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Vr75SLgNJnixRaIn",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Vr75SLgNJnixRaIn",
+          "cachedResultName": "WF#5 - invoice__approval--telegram"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2848,
+        -320
+      ],
+      "id": "126b565e-4561-47e4-9c5b-d0420d5ad106",
+      "name": "invoice__subworkflow--request-approval"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6JJ3s7LClwFAhTyt",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6JJ3s7LClwFAhTyt",
+          "cachedResultName": "WF#4 - invoice__manual-review--telegram"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2848,
+        -128
+      ],
+      "id": "fe0f0cc6-8f6a-47c0-a686-ffcc789156d9",
+      "name": "invoice__subworkflow--manual-review"
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{\n  'UNKNOWN_VALIDATION_RESULT: ' +\n  String($json.validation_result ?? 'missing') +\n  ' | processing_id: ' +\n  String($json.processing_id ?? 'missing')\n}}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2848,
+        64
+      ],
+      "id": "0ad60b92-26e5-4212-baa4-eb19f594d955",
+      "name": "invoice__error--unknown-validation-result"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lookupResult = $json;\n\nconst sourceItem =\n  $('invoice__document--prepare-metadata').item;\n\nif (!sourceItem) {\n  throw new Error(\n    'DUPLICATE_SOURCE_DOCUMENT_NOT_FOUND'\n  );\n}\n\nif (!sourceItem.json?.processing_id) {\n  throw new Error(\n    'DUPLICATE_SOURCE_PROCESSING_ID_MISSING'\n  );\n}\n\nif (!sourceItem.binary?.invoice_file) {\n  throw new Error(\n    `DUPLICATE_SOURCE_BINARY_MISSING: ${sourceItem.json.processing_id}`\n  );\n}\n\nconst sourceProcessingId =\n  String(sourceItem.json.processing_id).trim();\n\nconst existingProcessingId =\n  String(lookupResult.processing_id || '').trim();\n\nconst recordExists =\n  Boolean(existingProcessingId);\n\nlet processingRoute = 'new';\nlet existingStatus = '';\nlet duplicateReason = '';\n\nif (recordExists) {\n  if (existingProcessingId !== sourceProcessingId) {\n    throw new Error(\n      `DUPLICATE_LOOKUP_ID_MISMATCH: expected ${sourceProcessingId}, received ${existingProcessingId}`\n    );\n  }\n\n  existingStatus =\n    String(lookupResult.status || '')\n      .trim()\n      .toLowerCase();\n\n  const resumeExtractionStatuses = [\n    'file_stored',\n    'extraction_pending',\n    'extraction_failed',\n  ];\n\n  const skipExistingStatuses = [\n    'extracted',\n    'vendor_validated',\n    'duplicate_validated',\n    'validated',\n    'valid',\n    'warning',\n    'manual_review',\n    'manual_review_pending',\n    'manual_review_completed',\n    'approval_pending',\n    'approved',\n    'accounting_export_pending',\n    'accounting_exported',\n    'archive_pending',\n    'archived',\n    'completed',\n    'rejected',\n  ];\n\n  if (\n    resumeExtractionStatuses.includes(existingStatus)\n  ) {\n    processingRoute =\n      'resume_extraction';\n\n    duplicateReason =\n      'existing_incomplete_record';\n  } else if (\n    skipExistingStatuses.includes(existingStatus)\n  ) {\n    processingRoute =\n      'skip_existing';\n\n    duplicateReason =\n      'existing_active_or_terminal_record';\n  } else {\n    processingRoute =\n      'error';\n\n    duplicateReason =\n      `unsupported_existing_status:${existingStatus || 'empty'}`;\n  }\n}\n\nreturn {\n  json: {\n    ...sourceItem.json,\n\n    existing_record:\n      recordExists\n        ? lookupResult\n        : null,\n\n    record_exists:\n      recordExists,\n\n    existing_status:\n      existingStatus,\n\n    processing_route:\n      processingRoute,\n\n    duplicate_reason:\n      duplicateReason,\n\n    duplicate_checked_at:\n      new Date().toISOString(),\n  },\n\n  binary: {\n    invoice_file:\n      sourceItem.binary.invoice_file,\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -112
+      ],
+      "id": "bdb89fe2-fc70-4609-b8ab-74abd42b44d2",
+      "name": "invoice__duplicate--classify-processing-state"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.processing_route }}",
+                    "rightValue": "new",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c7a7ed07-1e68-4bb3-a8a9-d17c11aa84f1"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "new"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "fb67042e-cf09-4bea-8a3e-90218118575b",
+                    "leftValue": "={{ $json.processing_route }}",
+                    "rightValue": "resume_extraction",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "resume_extraction"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "0c2db354-4fd2-4957-8643-73c61dc1a8d9",
+                    "leftValue": "={{ $json.processing_route }}",
+                    "rightValue": "skip_existing",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "skip_existing"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6b8714ea-f0d1-4df0-8a8d-855bb3a29ab9",
+                    "leftValue": "={{ $json.processing_route }}",
+                    "rightValue": "error",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "error"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        944,
+        -144
+      ],
+      "id": "40925add-6446-4250-b15a-0a1c73a8847a",
+      "name": "invoice__route--processing-state"
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json;\n\nconst existing =\n  state.existing_record || {};\n\nconst processingId =\n  String(\n    existing.processing_id ||\n    state.processing_id ||\n    ''\n  ).trim();\n\nif (!processingId) {\n  throw new Error(\n    'DUPLICATE_SKIP_PROCESSING_ID_MISSING'\n  );\n}\n\nreturn {\n  json: {\n    processing_id:\n      processingId,\n\n    invoice_id:\n      existing.invoice_id || '',\n\n    email_message_id:\n      state.email_message_id || '',\n\n    attachment_index:\n      state.attachment_index ?? 0,\n\n    attachment_count:\n      state.attachment_count ?? 1,\n\n    execution_result:\n      'duplicate_skipped',\n\n    duplicate_skipped:\n      true,\n\n    existing_status:\n      state.existing_status,\n\n    existing_invoice_status:\n      existing.status || '',\n\n    duplicate_reason:\n      state.duplicate_reason,\n\n    existing_drive_file_url:\n      existing.drive_file_url || '',\n\n    file_name:\n      state.file_name || '',\n\n    ingestion_outcome:\n      'accepted',\n\n    ingestion_route:\n      'duplicate_skipped',\n\n    ingestion_completed_at:\n      new Date().toISOString(),\n\n    skipped_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        208
+      ],
+      "id": "2ba7249e-a432-429f-a038-da5f1cc0c6d9",
+      "name": "invoice__duplicate--prepare-skipped"
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{\n  'UNSUPPORTED_PROCESSING_STATE: ' +\n  String($json.processing_id ?? 'missing') +\n  ' | existing_status: ' +\n  String($json.existing_status ?? 'missing') +\n  ' | reason: ' +\n  String($json.duplicate_reason ?? 'missing')\n}}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        448
+      ],
+      "id": "f5cb2052-7794-4588-8b16-e10e587460fa",
+      "name": "invoice__error--unsupported-processing-state"
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $json;\n\nconst existing =\n  state.existing_record || {};\n\nconst processingId =\n  String(\n    existing.processing_id ||\n    state.processing_id ||\n    ''\n  ).trim();\n\nif (!processingId) {\n  throw new Error(\n    'RESUME_PROCESSING_ID_MISSING'\n  );\n}\n\nif (!state.binary && !$binary?.invoice_file) {\n  throw new Error(\n    `RESUME_INVOICE_BINARY_MISSING: ${processingId}`\n  );\n}\n\nif (!$binary?.invoice_file) {\n  throw new Error(\n    `RESUME_INVOICE_FILE_MISSING: ${processingId}`\n  );\n}\n\nconst existingStatus =\n  String(\n    existing.status ||\n    state.existing_status ||\n    ''\n  )\n    .trim()\n    .toLowerCase();\n\nconst allowedStatuses = [\n  'file_stored',\n  'extraction_pending',\n  'extraction_failed',\n];\n\nif (!allowedStatuses.includes(existingStatus)) {\n  throw new Error(\n    `RESUME_STATUS_NOT_ALLOWED: ${processingId} | ${existingStatus || 'missing'}`\n  );\n}\n\nlet driveFileId =\n  String(existing.drive_file_id || '').trim();\n\nconst driveFileUrl =\n  String(existing.drive_file_url || '').trim();\n\nif (!driveFileId && driveFileUrl) {\n  const match =\n    driveFileUrl.match(/\\/file\\/d\\/([^/]+)/);\n\n  if (match?.[1]) {\n    driveFileId = match[1];\n  }\n}\n\nif (!driveFileUrl) {\n  throw new Error(\n    `RESUME_DRIVE_FILE_URL_MISSING: ${processingId}`\n  );\n}\n\nconst resumeStartedAt =\n  new Date().toISOString();\n\nreturn {\n  json: {\n    ...existing,\n\n    processing_id:\n      processingId,\n\n    email_message_id:\n      state.email_message_id ||\n      existing.email_message_id ||\n      '',\n\n    sender_email:\n      state.sender_email ||\n      existing.sender_email ||\n      '',\n\n    file_name:\n      existing.file_name ||\n      state.original_file_name ||\n      state.file_name ||\n      '',\n\n    drive_file_id:\n      driveFileId,\n\n    drive_file_url:\n      driveFileUrl,\n\n    storage_file_name:\n      existing.storage_file_name ||\n      state.storage_file_name ||\n      '',\n\n    previous_status:\n      existingStatus,\n\n    status:\n      'extraction_pending',\n\n    processing_resumed:\n      true,\n\n    resume_stage:\n      'extraction',\n\n    resume_reason:\n      state.duplicate_reason ||\n      'existing_incomplete_record',\n\n    resume_started_at:\n      resumeStartedAt,\n\n    extraction_started_at:\n      resumeStartedAt,\n  },\n\n  binary: {\n    invoice_file: {\n      ...$binary.invoice_file,\n\n      fileName:\n        existing.storage_file_name ||\n        state.storage_file_name ||\n        $binary.invoice_file.fileName,\n    },\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -128
+      ],
+      "id": "2bb7884d-7cd8-4366-bbd1-8041304cbd57",
+      "name": "invoice__document--restore-resume-extraction"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $json;\n\nreturn {\n  json: {\n    ...result,\n\n    email_message_id:\n      result.email_message_id ||\n      $('invoice__document--prepare-metadata')\n        .item.json.email_message_id,\n\n    attachment_index:\n      result.attachment_index ??\n      $('invoice__document--prepare-metadata')\n        .item.json.attachment_index,\n\n    attachment_count:\n      result.attachment_count ??\n      $('invoice__document--prepare-metadata')\n        .item.json.attachment_count ??\n      1,\n\n    ingestion_outcome:\n      'accepted',\n\n    ingestion_route:\n      'manual_review',\n\n    ingestion_completed_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3056,
+        -320
+      ],
+      "id": "d34d23a9-1445-4fca-8465-34f2b02ad091",
+      "name": "invoice__ingestion--normalize-manual-review-result"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QkOEsDnrIDdtsg89",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QkOEsDnrIDdtsg89",
+          "cachedResultName": "WF#9 - invoice__gmail--finalize-message"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3392,
+        208
+      ],
+      "id": "6f44da52-6e19-47c4-a753-08eac602360a",
+      "name": "invoice__subworkflow--finalize-gmail-message"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1408,
+        208
+      ],
+      "id": "ed05a4c6-0646-4abd-bbb8-64151d0a3285",
+      "name": "invoice__result--duplicate-skipped"
+    },
+    {
+      "parameters": {
+        "jsCode": "const gmailResult = $json;\n\nconst finalized =\n  gmailResult.gmail_finalized === true;\n\nconst deferred =\n  gmailResult.gmail_finalization_ready === false;\n\nif (!finalized && !deferred) {\n  throw new Error(\n    `INGESTION_GMAIL_FINALIZATION_RESULT_INVALID: ${\n      gmailResult.email_message_id || 'missing'\n    }`\n  );\n}\n\nconst ingestionFinishedAt =\n  new Date().toISOString();\n\nreturn {\n  json: {\n    ...gmailResult,\n\n    ingestion_completed:\n      true,\n\n    ingestion_status:\n      finalized\n        ? 'gmail_finalized'\n        : 'gmail_finalization_deferred',\n\n    ingestion_finished_at:\n      ingestionFinishedAt,\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        208
+      ],
+      "id": "5d0c7f66-e8e9-4167-ad53-0faff1fe90a3",
+      "name": "invoice__ingestion--normalize-result"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3808,
+        208
+      ],
+      "id": "f9d40a58-9fd8-429c-9492-211d0f9613df",
+      "name": "invoice__result--ingestion-completed"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "invoice__trigger--gmail": {
+      "main": [
+        [
+          {
+            "node": "invoice__message--get-attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__message--get-attachments": {
+      "main": [
+        [
+          {
+            "node": "invoice__attachment--split-pdf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__attachment--split-pdf": {
+      "main": [
+        [
+          {
+            "node": "invoice__document--prepare-metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__document--prepare-metadata": {
+      "main": [
+        [
+          {
+            "node": "invoice__duplicate--lookup-processing-id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__duplicate--lookup-processing-id": {
+      "main": [
+        [
+          {
+            "node": "invoice__duplicate--classify-processing-state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__document--restore-new": {
+      "main": [
+        [
+          {
+            "node": "invoice__file--upload-inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__file--upload-inbox": {
+      "main": [
+        [
+          {
+            "node": "invoice__record--prepare-received",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__record--prepare-received": {
+      "main": [
+        [
+          {
+            "node": "invoice__record--upsert-received",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__record--upsert-received": {
+      "main": [
+        [
+          {
+            "node": "invoice__document--restore-for-extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__document--restore-for-extraction": {
+      "main": [
+        [
+          {
+            "node": "invoice__subworkflow--extract-document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__subworkflow--extract-document": {
+      "main": [
+        [
+          {
+            "node": "invoice__subworkflow--validate-invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__subworkflow--validate-invoice": {
+      "main": [
+        [
+          {
+            "node": "invoice__route--validation-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__route--validation-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__subworkflow--request-approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__subworkflow--manual-review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__error--unknown-validation-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__duplicate--classify-processing-state": {
+      "main": [
+        [
+          {
+            "node": "invoice__route--processing-state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__route--processing-state": {
+      "main": [
+        [
+          {
+            "node": "invoice__document--restore-new",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__document--restore-resume-extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__duplicate--prepare-skipped",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__error--unsupported-processing-state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__duplicate--prepare-skipped": {
+      "main": [
+        [
+          {
+            "node": "invoice__result--duplicate-skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__document--restore-resume-extraction": {
+      "main": [
+        [
+          {
+            "node": "invoice__subworkflow--extract-document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__subworkflow--request-approval": {
+      "main": [
+        [
+          {
+            "node": "invoice__ingestion--normalize-manual-review-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__result--duplicate-skipped": {
+      "main": [
+        [
+          {
+            "node": "invoice__subworkflow--finalize-gmail-message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__ingestion--normalize-manual-review-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__subworkflow--finalize-gmail-message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__subworkflow--manual-review": {
+      "main": [
+        [
+          {
+            "node": "invoice__subworkflow--finalize-gmail-message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__subworkflow--finalize-gmail-message": {
+      "main": [
+        [
+          {
+            "node": "invoice__ingestion--normalize-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__ingestion--normalize-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__result--ingestion-completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qzdUs37Qnqgurnap",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "ea7ce5ee-769a-4778-83f9-035f1c3462d5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e41969196591392860fa0180c3dcaccfc46cab480b97ef922a54ce6b7e40da4"
+  },
+  "nodeGroups": [],
+  "id": "2rdQ3GKMiENrxuVG",
+  "tags": []
+}

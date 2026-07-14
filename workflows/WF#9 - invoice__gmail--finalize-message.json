@@ -1,0 +1,350 @@
+{
+  "name": "WF#9 - invoice__gmail--finalize-message",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "b9145500-cffe-4a78-a4be-744bfc96d553",
+      "name": "invoice__gmail--finalize-message"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\n\nconst emailMessageId =\n  String(input.email_message_id || '').trim();\n\nconst processingId =\n  String(input.processing_id || '').trim();\n\nconst attachmentCount =\n  Number(input.attachment_count ?? 1);\n\nif (!emailMessageId) {\n  throw new Error(\n    'GMAIL_FINALIZATION_MESSAGE_ID_MISSING'\n  );\n}\n\nif (!processingId) {\n  throw new Error(\n    `GMAIL_FINALIZATION_PROCESSING_ID_MISSING: ${emailMessageId}`\n  );\n}\n\nif (\n  !Number.isInteger(attachmentCount) ||\n  attachmentCount < 1\n) {\n  throw new Error(\n    `GMAIL_FINALIZATION_ATTACHMENT_COUNT_INVALID: ${attachmentCount}`\n  );\n}\n\nreturn {\n  json: {\n    ...input,\n\n    email_message_id:\n      emailMessageId,\n\n    processing_id:\n      processingId,\n\n    attachment_count:\n      attachmentCount,\n\n    gmail_finalization_started_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "6ffcd24d-f982-4883-96c6-17777bcb4cdc",
+      "name": "invoice__gmail--prepare-finalization"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "email_message_id",
+              "lookupValue": "={{ $json.email_message_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        448,
+        0
+      ],
+      "id": "5d080386-b448-49af-8fae-181a189f0da0",
+      "name": "invoice__gmail--lookup-message-invoices",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source =\n  $('invoice__gmail--prepare-finalization').first().json;\n\nconst expectedAttachmentCount =\n  Number(source.attachment_count);\n\nconst rawRows =\n  $input.all()\n    .map(item => item.json)\n    .filter(row =>\n      Boolean(\n        String(row.processing_id || '').trim()\n      )\n    );\n\nconst uniqueRowsMap =\n  new Map();\n\nfor (const row of rawRows) {\n  const processingId =\n    String(row.processing_id || '').trim();\n\n  if (!uniqueRowsMap.has(processingId)) {\n    uniqueRowsMap.set(\n      processingId,\n      row\n    );\n  }\n}\n\nconst invoiceRows =\n  [...uniqueRowsMap.values()];\n\nconst acceptedStatuses = [\n  'extracted',\n  'vendor_validated',\n  'duplicate_validated',\n  'validated',\n  'valid',\n  'warning',\n  'manual_review',\n  'manual_review_pending',\n  'manual_review_completed',\n  'approval_pending',\n  'approved',\n  'accounting_export_pending',\n  'accounting_exported',\n  'archive_pending',\n  'archived',\n  'completed',\n  'rejected',\n];\n\nconst incompleteRows =\n  invoiceRows.filter(row => {\n    const status =\n      String(row.status || '')\n        .trim()\n        .toLowerCase();\n\n    return !acceptedStatuses.includes(status);\n  });\n\nconst registeredCount =\n  invoiceRows.length;\n\nconst allAttachmentsRegistered =\n  registeredCount >= expectedAttachmentCount;\n\nconst allRecordsAccepted =\n  allAttachmentsRegistered &&\n  incompleteRows.length === 0;\n\nconst gmailFinalizationReady =\n  allRecordsAccepted;\n\nreturn [\n  {\n    json: {\n      ...source,\n\n      registered_invoice_count:\n        registeredCount,\n\n      expected_attachment_count:\n        expectedAttachmentCount,\n\n      registered_processing_ids:\n        invoiceRows.map(\n          row => row.processing_id\n        ),\n\n      incomplete_processing_ids:\n        incompleteRows.map(\n          row => row.processing_id\n        ),\n\n      all_attachments_registered:\n        allAttachmentsRegistered,\n\n      all_records_accepted:\n        allRecordsAccepted,\n\n      gmail_finalization_ready:\n        gmailFinalizationReady,\n\n      gmail_finalization_evaluated_at:\n        new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "3f723fec-1f5c-4c24-9d9e-fc15ded07f68",
+      "name": "invoice__gmail--evaluate-message"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c9e0899b-dd08-462d-b99b-ff49d047a470",
+              "leftValue": "={{ $json.gmail_finalization_ready }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        0
+      ],
+      "id": "ca69b428-820f-4685-bb4e-35893379d8b1",
+      "name": "invoice__condition--gmail-finalization-ready"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        96
+      ],
+      "id": "c9455155-d769-486d-812e-7ec818e827dc",
+      "name": "invoice__result--gmail-finalization-deferred"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('invoice__gmail--evaluate-message').item.json.email_message_id }}",
+        "labelIds": [
+          "Label_5445994965912454394"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        -96
+      ],
+      "id": "4573b3d5-bc1b-440b-a46e-d74cfbccdc15",
+      "name": "invoice__message--add-processed-label",
+      "webhookId": "1a4a8e7e-d4c3-40d8-bde3-78e6c4c3c16c",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Bm0yiOT4OW5BbIrV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "removeLabels",
+        "messageId": "={{ $('invoice__gmail--evaluate-message').item.json.email_message_id }}",
+        "labelIds": [
+          "Label_4108445562023158677"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        -96
+      ],
+      "id": "fd4de7d8-b9d9-4411-b302-d7e4ee8c3c47",
+      "name": "invoice__message--remove-inbox-label",
+      "webhookId": "5e17f084-2e25-4f4e-8c74-0e4591a00e03",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Bm0yiOT4OW5BbIrV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "markAsRead",
+        "messageId": "={{ $('invoice__gmail--evaluate-message').item.json.email_message_id }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        -96
+      ],
+      "id": "65446a21-0115-480e-ab6a-9d3e26ae9486",
+      "name": "invoice__message--mark-read",
+      "webhookId": "6cc97331-2cd0-4ddc-b83b-6223a834fcc5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Bm0yiOT4OW5BbIrV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const evaluation =\n  $('invoice__gmail--evaluate-message').item.json;\n\nconst finalizedAt =\n  new Date().toISOString();\n\nreturn {\n  json: {\n    ...evaluation,\n\n    gmail_finalized:\n      true,\n\n    gmail_source_label_removed:\n      true,\n\n    gmail_processed_label_added:\n      true,\n\n    gmail_marked_read:\n      true,\n\n    gmail_finalized_at:\n      finalizedAt,\n\n    execution_result:\n      'gmail_message_finalized',\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        -96
+      ],
+      "id": "8a9706ac-0d0d-4458-b07a-4879785ddef1",
+      "name": "invoice__gmail--normalize-result"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2016,
+        -96
+      ],
+      "id": "f5ada669-9f19-4204-af63-33e5eaf36eb0",
+      "name": "invoice__result--gmail-finalized"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "invoice__gmail--finalize-message": {
+      "main": [
+        [
+          {
+            "node": "invoice__gmail--prepare-finalization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__gmail--prepare-finalization": {
+      "main": [
+        [
+          {
+            "node": "invoice__gmail--lookup-message-invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__gmail--lookup-message-invoices": {
+      "main": [
+        [
+          {
+            "node": "invoice__gmail--evaluate-message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__gmail--evaluate-message": {
+      "main": [
+        [
+          {
+            "node": "invoice__condition--gmail-finalization-ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__condition--gmail-finalization-ready": {
+      "main": [
+        [
+          {
+            "node": "invoice__message--add-processed-label",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__result--gmail-finalization-deferred",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__message--add-processed-label": {
+      "main": [
+        [
+          {
+            "node": "invoice__message--remove-inbox-label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__message--remove-inbox-label": {
+      "main": [
+        [
+          {
+            "node": "invoice__message--mark-read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__message--mark-read": {
+      "main": [
+        [
+          {
+            "node": "invoice__gmail--normalize-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__gmail--normalize-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__result--gmail-finalized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qzdUs37Qnqgurnap",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "10eb05e4-eb11-49e7-83d0-f0ccbf6e151e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e41969196591392860fa0180c3dcaccfc46cab480b97ef922a54ce6b7e40da4"
+  },
+  "nodeGroups": [],
+  "id": "QkOEsDnrIDdtsg89",
+  "tags": []
+}

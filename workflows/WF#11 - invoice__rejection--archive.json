@@ -1,0 +1,563 @@
+{
+  "name": "WF#11 - invoice__rejection--archive",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        -16
+      ],
+      "id": "5ea99fe4-ca0d-4969-abd8-08cf9e6b3b7d",
+      "name": "invoice__trigger--subworkflow"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5383183e-2104-4033-aa35-1561d39dc49f",
+              "leftValue": "={{\n  String($json.status ?? '')\n    .trim()\n    .toLowerCase() === 'rejected'\n  &&\n  String($json.approval_decision ?? '')\n    .trim()\n    .toLowerCase() === 'rejected'\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -448,
+        -16
+      ],
+      "id": "1851fb4a-5300-41a1-b7ba-700a56c234fa",
+      "name": "invoice__condition--rejected-for-archive"
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{\n  'REJECTION_ARCHIVE_NOT_ALLOWED: ' +\n  String($json.processing_id ?? 'missing') +\n  ' | status: ' +\n  String($json.status ?? 'missing') +\n  ' | approval_decision: ' +\n  String($json.approval_decision ?? 'missing')\n}}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        80
+      ],
+      "id": "4832ab5e-35b9-4501-84fe-06b8198344f3",
+      "name": "invoice__error--not-rejected"
+    },
+    {
+      "parameters": {
+        "jsCode": "const invoice = $json;\n\nconst processingId =\n  String(invoice.processing_id || '').trim();\n\nif (!processingId) {\n  throw new Error(\n    'REJECTION_PROCESSING_ID_MISSING'\n  );\n}\n\nconst driveFileUrl =\n  String(invoice.drive_file_url || '').trim();\n\nlet driveFileId =\n  String(invoice.drive_file_id || '').trim();\n\nif (!driveFileId && driveFileUrl) {\n  const match =\n    driveFileUrl.match(\n      /\\/file\\/d\\/([^/]+)/\n    );\n\n  if (match?.[1]) {\n    driveFileId = match[1];\n  }\n}\n\nif (!driveFileId) {\n  throw new Error(\n    `REJECTION_DRIVE_FILE_ID_MISSING: ${processingId}`\n  );\n}\n\nconst callbackAction =\n  String(invoice.callback_action || '')\n    .trim()\n    .toLowerCase();\n\nlet rejectionStage =\n  'unknown';\n\nif (callbackAction === 'reject') {\n  rejectionStage =\n    'manual_review';\n}\n\nif (callbackAction === 'approval_reject') {\n  rejectionStage =\n    'final_approval';\n}\n\nconst rejectedAt =\n  invoice.rejected_at ||\n  invoice.final_decision_at ||\n  invoice.processed_at ||\n  new Date().toISOString();\n\nreturn {\n  json: {\n    ...invoice,\n\n    drive_file_id:\n      driveFileId,\n\n    rejection_stage:\n      rejectionStage,\n\n    rejection_target_folder:\n      '04_Rejected',\n\n    rejected_at:\n      rejectedAt,\n\n    rejection_archive_started_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        -112
+      ],
+      "id": "07939c87-70c8-403f-9c6c-54408eb31d27",
+      "name": "invoice__rejection--prepare-file"
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.drive_file_id }}",
+          "mode": "id"
+        },
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1vrbZcmElxCvizL5_RSwZ3EXsQsI7NOpY",
+          "mode": "list",
+          "cachedResultName": "04_Rejected",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1vrbZcmElxCvizL5_RSwZ3EXsQsI7NOpY"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -32,
+        -112
+      ],
+      "id": "17d7d8bb-dcb3-4668-9862-d29b5208c84d",
+      "name": "invoice__rejection--move-to-rejected",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JLFTJj6Q3R2GhW31",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared =\n  $('invoice__rejection--prepare-file').item.json;\n\nconst driveResult =\n  $json;\n\nconst driveFileId =\n  driveResult.id ||\n  prepared.drive_file_id;\n\nif (!driveFileId) {\n  throw new Error(\n    `REJECTION_MOVE_RESULT_INVALID: ${prepared.processing_id}`\n  );\n}\n\nconst archivedAt =\n  new Date().toISOString();\n\nreturn {\n  json: {\n    ...prepared,\n\n    status:\n      'rejected',\n\n    approval_decision:\n      'rejected',\n\n    drive_file_id:\n      driveFileId,\n\n    drive_file_url:\n      `https://drive.google.com/file/d/${driveFileId}/view`,\n\n    rejection_archived:\n      true,\n\n    rejection_archive_folder:\n      '04_Rejected',\n\n    rejection_archived_at:\n      archivedAt,\n\n    rejection_archive_result: {\n      file_id:\n        driveFileId,\n\n      file_name:\n        driveResult.name ||\n        prepared.storage_file_name ||\n        prepared.file_name ||\n        '',\n\n      mime_type:\n        driveResult.mimeType ||\n        'application/pdf',\n\n      folder:\n        '04_Rejected',\n    },\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        -112
+      ],
+      "id": "3a59c1f7-79c5-48ed-8a28-5200624683dc",
+      "name": "invoice__rejection--normalize-archive-result"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I",
+          "mode": "list",
+          "cachedResultName": "AI Invoice Processing Database",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1x8F_ykWAprcm_OHKbbihYllOm2o_xYHBqmttFDkPH5I/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "processing_id": "={{ $json.processing_id }}",
+            "status": "={{ $json.status }}",
+            "approval_decision": "={{ $json.approval_decision }}",
+            "approval_comment": "={{ $json.approval_comment }}",
+            "processed_at": "={{ $json.rejected_at }}",
+            "drive_file_url": "={{ $json.drive_file_url }}"
+          },
+          "matchingColumns": [
+            "processing_id"
+          ],
+          "schema": [
+            {
+              "id": "invoice_id",
+              "displayName": "invoice_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "processing_id",
+              "displayName": "processing_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "email_message_id",
+              "displayName": "email_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sender_email",
+              "displayName": "sender_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "file_name",
+              "displayName": "file_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "drive_file_url",
+              "displayName": "drive_file_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_name",
+              "displayName": "vendor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "vendor_id",
+              "displayName": "vendor_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "iban",
+              "displayName": "iban",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "vendor_found",
+              "displayName": "vendor_found",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "bank_details_match",
+              "displayName": "bank_details_match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "is_duplicate",
+              "displayName": "is_duplicate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "validation_result",
+              "displayName": "validation_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "risk_flags",
+              "displayName": "risk_flags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "manager_id",
+              "displayName": "manager_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "approval_decision",
+              "displayName": "approval_decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "approval_comment",
+              "displayName": "approval_comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        384,
+        -112
+      ],
+      "id": "4b9474fd-3dce-4fdb-9d7f-75ca3d573aa3",
+      "name": "invoice__rejection--update-invoice",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "S5w39Zl07GRetJeP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const archived =\n  $('invoice__rejection--normalize-archive-result').item.json;\n\nconst sheetResult =\n  $json;\n\nconst returnedStatus =\n  String(sheetResult.status || '')\n    .trim()\n    .toLowerCase();\n\nif (\n  returnedStatus &&\n  returnedStatus !== 'rejected'\n) {\n  throw new Error(\n    `REJECTION_REGISTRY_STATUS_MISMATCH: expected rejected, received ${returnedStatus}`\n  );\n}\n\nreturn {\n  json: {\n    ...archived,\n\n    status:\n      'rejected',\n\n    approval_decision:\n      'rejected',\n\n    registry_updated:\n      true,\n\n    registry_row_number:\n      sheetResult.row_number ??\n      sheetResult.rowNumber ??\n      archived.row_number ??\n      null,\n\n    rejection_completed:\n      true,\n\n    rejection_completed_at:\n      new Date().toISOString(),\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        -112
+      ],
+      "id": "088bd1bc-06ea-42bd-ba7d-3c999ff22b4b",
+      "name": "invoice__rejection--normalize-result"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        800,
+        -112
+      ],
+      "id": "286ce1e6-eeac-4dea-be9d-48a68500e1dc",
+      "name": "invoice__result--rejected"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "invoice__trigger--subworkflow": {
+      "main": [
+        [
+          {
+            "node": "invoice__condition--rejected-for-archive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__condition--rejected-for-archive": {
+      "main": [
+        [
+          {
+            "node": "invoice__rejection--prepare-file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "invoice__error--not-rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__rejection--prepare-file": {
+      "main": [
+        [
+          {
+            "node": "invoice__rejection--move-to-rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__rejection--move-to-rejected": {
+      "main": [
+        [
+          {
+            "node": "invoice__rejection--normalize-archive-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__rejection--normalize-archive-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__rejection--update-invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__rejection--update-invoice": {
+      "main": [
+        [
+          {
+            "node": "invoice__rejection--normalize-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice__rejection--normalize-result": {
+      "main": [
+        [
+          {
+            "node": "invoice__result--rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qzdUs37Qnqgurnap",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "680b5c4f-4a12-4faf-9724-834f92a69d12",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e41969196591392860fa0180c3dcaccfc46cab480b97ef922a54ce6b7e40da4"
+  },
+  "nodeGroups": [],
+  "id": "NDvaRmmLL6kGkse4",
+  "tags": []
+}
